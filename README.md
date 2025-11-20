@@ -1,2 +1,3 @@
 # gsy_daylighting
-楼盘采光
+某个楼盘的采光模拟
+可以通过 https://seanwong17.github.io/gsy_daylighting/ 直接打开查看
