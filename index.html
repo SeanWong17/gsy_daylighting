@@ -3,18 +3,24 @@
 <head>
   <meta charset="UTF-8" />
   <title>楼盘采光可视化</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <style>
     :root {
       --ui-bg: rgba(255,255,255,0.96);
       --brand: #0b74ff;
       --text: #2b2f36;
+      --radius: 12px;
     }
     html, body { height: 100%; }
-    body { margin: 0; overflow: hidden; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif; background: #e6f3ff; }
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif;
+      background: #e6f3ff;
+    }
     #canvas-container { width: 100%; height: 100vh; display: block; }
 
-    /* UI 面板 */
+    /* 右上控制面板（桌面） */
     #controls {
       position: absolute;
       top: 16px;
@@ -23,10 +29,11 @@
       max-width: calc(100vw - 32px);
       background: var(--ui-bg);
       padding: 16px;
-      border-radius: 12px;
+      border-radius: var(--radius);
       box-shadow: 0 6px 24px rgba(0,0,0,0.15);
       z-index: 10;
       backdrop-filter: saturate(180%) blur(8px);
+      transition: transform .25s ease, opacity .2s ease, height .25s ease, width .25s ease;
     }
     .control-group { margin-bottom: 14px; }
     label { display: block; margin-bottom: 6px; font-weight: 700; font-size: 14px; color: var(--text); }
@@ -43,6 +50,7 @@
     h2 { margin: 0 0 12px; font-size: 16px; text-align: center; color: #111; border-bottom: 1px solid #e9eef5; padding-bottom: 10px; }
     .legend { display: flex; gap: 10px; font-size: 12px; margin-top: 8px; justify-content: center; color: #666; }
 
+    /* 指南针 */
     #compass {
       position: absolute;
       bottom: 18px;
@@ -52,44 +60,147 @@
       pointer-events: none;
       z-index: 5;
     }
+
+    /* 手机优化：小屏时重构 UI 布局 */
+    @media (max-width: 600px) {
+      /* 主面板缩小并支持折叠 */
+      #controls {
+        top: env(safe-area-inset-top, 8px);
+        right: 8px;
+        width: 260px;
+        padding: 12px;
+        border-radius: 14px;
+      }
+      h2 { font-size: 15px; margin-bottom: 8px; padding-bottom: 8px; }
+      label { font-size: 13px; margin-bottom: 4px; }
+      select { padding: 8px; font-size: 14px; }
+      .control-group { margin-bottom: 10px; }
+
+      /* 隐藏“当前状态”和“提示” */
+      #statusBlock, .legend { display: none !important; }
+
+      /* 时间显示移动到底部迷你条，不在主面板占位 */
+      #timeBlock { display: none; }
+
+      /* 指南针缩小 */
+      #compass { width: 64px; height: 64px; bottom: calc(env(safe-area-inset-bottom, 16px) + 56px); right: 12px; }
+
+      /* 折叠状态外观（用 data-collapsed 控制） */
+      #controls[data-collapsed="true"] {
+        width: 54px;
+        height: 54px;
+        padding: 0;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+      }
+      #controls[data-collapsed="true"] .panel-content { display: none; }
+      #controls[data-collapsed="true"] .fab {
+        display: grid;
+      }
+      /* 展开时显示内容，隐藏按钮 */
+      #controls[data-collapsed="false"] .panel-content { display: block; }
+      #controls[data-collapsed="false"] .fab { display: none; }
+
+      /* 悬浮按钮样式 */
+      .fab {
+        display: none;
+        width: 54px;
+        height: 54px;
+        border-radius: 50%;
+        background: var(--ui-bg);
+        box-shadow: 0 6px 24px rgba(0,0,0,0.2);
+        color: var(--brand);
+        font-weight: 900;
+        place-items: center;
+        user-select: none;
+      }
+
+      /* 底部时间迷你条 */
+      #timeDock {
+        position: absolute;
+        left: 10px;
+        right: 10px;
+        bottom: env(safe-area-inset-bottom, 10px);
+        height: 56px;
+        background: var(--ui-bg);
+        border-radius: 14px;
+        box-shadow: 0 8px 28px rgba(0,0,0,0.18);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 12px;
+        z-index: 12;
+        backdrop-filter: saturate(180%) blur(8px);
+      }
+      #timeDock .timeLabel {
+        font-size: 13px;
+        color: #3b3f46;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      #timeDock input[type="range"] {
+        flex: 1;
+        height: 28px;
+        accent-color: var(--brand);
+      }
+      #timeDock .timeValue {
+        width: 64px;
+        text-align: right;
+        font-weight: 800;
+        color: var(--brand);
+      }
+    }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 </head>
 <body>
-  <div id="controls">
-    <h2>☀️ 楼盘采光模拟系统</h2>
+  <!-- 控制面板：移动端可折叠，时间滑块挪到底部迷你条 -->
+  <div id="controls" data-collapsed="false" aria-label="控制面板">
+    <div class="fab" id="fabBtn" title="展开">☰</div>
+    <div class="panel-content">
+      <h2>☀️ 楼盘采光模拟系统</h2>
 
-    <div class="control-group">
-      <label>当前状态</label>
-      <div style="font-size: 13px; color: #555; line-height: 1.5;">
-        坐标对齐规划图<br>
-        方位：<span style="color:#e01919;font-weight:800;">↑ 上方为北</span>
+      <div class="control-group" id="statusBlock">
+        <label>当前状态</label>
+        <div style="font-size: 13px; color: #555; line-height: 1.5;">
+          坐标对齐规划图<br>
+          方位：<span style="color:#e01919;font-weight:800;">↑ 上方为北</span>
+        </div>
       </div>
-    </div>
 
-    <div class="control-group">
-      <label for="seasonSelect">选择日期</label>
-      <select id="seasonSelect">
-        <option value="-23.44" selected>冬至 (12月22日)</option>
-        <option value="0">春分/秋分</option>
-        <option value="23.44">夏至 (6月22日)</option>
-      </select>
-    </div>
+      <div class="control-group">
+        <label for="seasonSelect">选择日期</label>
+        <select id="seasonSelect">
+          <option value="-23.44" selected>冬至 (12月22日)</option>
+          <option value="0">春分/秋分</option>
+          <option value="23.44">夏至 (6月22日)</option>
+        </select>
+      </div>
 
-    <div class="control-group">
-      <label for="timeSlider">时间 (06:00 - 18:00)</label>
-      <input type="range" id="timeSlider" min="6" max="18" step="0.05" value="10" />
-      <div class="time-display" id="timeText">10:00</div>
-    </div>
+      <!-- 原时间块在桌面显示，移动端挪到底部 -->
+      <div class="control-group" id="timeBlock">
+        <label for="timeSlider">时间 (06:00 - 18:00)</label>
+        <input type="range" id="timeSlider" min="6" max="18" step="0.05" value="10" />
+        <div class="time-display" id="timeText">10:00</div>
+      </div>
 
-    <div class="legend">
-      <span>💡 提示: 拖动查看阴影变化</span>
+      <div class="legend">
+        <span>💡 提示: 拖动查看阴影变化</span>
+      </div>
     </div>
   </div>
 
-  <div id="compass">
-    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <!-- 底部时间迷你条（仅在小屏样式下可见） -->
+  <div id="timeDock" aria-label="时间控制" role="group" style="display:none;">
+    <span class="timeLabel">时间</span>
+    <input type="range" id="timeSliderDock" min="6" max="18" step="0.05" value="10" />
+    <span class="timeValue" id="timeTextDock">10:00</span>
+  </div>
+
+  <div id="compass" aria-hidden="true">
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
       <circle cx="50" cy="50" r="45" fill="rgba(255,255,255,0.75)" stroke="#333" stroke-width="2"/>
       <path d="M50 10 L60 50 L50 90 L40 50 Z" fill="#ddd" />
       <path d="M50 10 L60 50 L50 50 L40 50 Z" fill="red" />
@@ -160,8 +271,8 @@
 
   // ========== 立面纹理：水平分层线 + 竖向分户线 ==========
   function createFacadeTexture(floors, verticalDividerCount) {
-    const floorPx = 28;             // 每层在纹理中的像素高度（影响水平线间距）
-    const width = 512;              // 提高横向分辨率，竖线更清晰
+    const floorPx = 28;
+    const width = 512;
     const height = Math.max(floors * floorPx, 2);
 
     const canvas = document.createElement('canvas');
@@ -169,34 +280,28 @@
     canvas.height = height;
     const ctx = canvas.getContext('2d');
 
-    // 背景渐变
     const grd = ctx.createLinearGradient(0, 0, 0, canvas.height);
     grd.addColorStop(0, '#b1bfd1');
     grd.addColorStop(1, '#a2b2c7');
     ctx.fillStyle = grd;
     ctx.fillRect(0, 0, width, height);
 
-    // 水平分层线：floors - 1 根（等距，模拟楼层）
     for (let f = 1; f < floors; f++) {
       const y = Math.round((f / floors) * height);
       ctx.fillStyle = 'rgba(35,45,60,0.55)'; ctx.fillRect(0, y - 1, width, 2);
       ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(0, y + 1, width, 1);
     }
 
-    // 竖向分户线：根据 verticalDividerCount 画等距竖线
     if (verticalDividerCount && verticalDividerCount > 0) {
       for (let i = 1; i <= verticalDividerCount; i++) {
         const t = i / (verticalDividerCount + 1);
         const x = Math.round(t * width);
-
-        // 主线 + 高光，增强可读性
         ctx.fillStyle = 'rgba(35,45,60,0.55)'; ctx.fillRect(x - 1, 0, 2, height);
         ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fillRect(x + 1, 0, 1, height);
       }
     }
 
     const tex = new THREE.CanvasTexture(canvas);
-    // 垂直方向不重复；水平方向也不重复，以确保竖线位置固定在 0..1
     tex.wrapS = THREE.ClampToEdgeWrapping;
     tex.wrapT = THREE.ClampToEdgeWrapping;
     tex.repeat.set(1, 1);
@@ -205,24 +310,20 @@
     return tex;
   }
 
-  // 顶面材质
   const roofMaterial = new THREE.MeshStandardMaterial({ color: 0xf5f7fa, roughness: 0.9, metalness: 0.0 });
 
-  // 描边
   function createEdgeLines(geometry) {
     const edges = new THREE.EdgesGeometry(geometry);
     const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x435061, linewidth: 1, transparent: true, opacity: 0.5 }));
     return line;
   }
 
-  // 标签
   function createLabel(text, x, y, z) {
     const canvas = document.createElement('canvas');
     const size = 256;
     canvas.width = size; canvas.height = size / 2;
     const ctx = canvas.getContext('2d');
 
-    // 圆角底
     ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
     const r = 28, w = size - 24, h = (size/2) - 24, x0 = 12, y0 = 12;
     ctx.beginPath();
@@ -247,7 +348,6 @@
     return sprite;
   }
 
-  // 自定义 UV：侧墙 V 随高度，U 随平面 X（用于固定竖线位置）
   function makeUVGenerator(minX, maxX, minY, maxY, depth) {
     const rangeX = Math.max(1e-6, maxX - minX);
     const rangeY = Math.max(1e-6, maxY - minY);
@@ -291,13 +391,12 @@
     };
   }
 
-  // 分户竖线数量规则
   function getVerticalDividerCount(name) {
     const n = parseInt(name, 10);
-    if ([1,2,3,4,5,12,13].includes(n)) return 1;  // 两户
-    if ([7,8,9,10,11].includes(n)) return 3;      // 四户
-    if (n === 6) return 5;                         // 六户
-    return 0;                                      // 其他不处理（14号楼）
+    if ([1,2,3,4,5,12,13].includes(n)) return 1;
+    if ([7,8,9,10,11].includes(n)) return 3;
+    if (n === 6) return 5;
+    return 0;
   }
 
   // ========== 构建楼体 ==========
@@ -307,20 +406,17 @@
   buildingData.buildings.forEach(b => {
     if (!b.shape || b.shape.length < 3) return;
 
-    // 2D 轮廓（注意 Y 取反以符合“上北下南”）
     const shape = new THREE.Shape();
     shape.moveTo(b.shape[0].x, -b.shape[0].y);
     for (let i = 1; i < b.shape.length; i++) shape.lineTo(b.shape[i].x, -b.shape[i].y);
     shape.closePath();
 
-    // 形状范围（用于 UV 映射）
     const pts = b.shape.map(p => ({ x: p.x, y: -p.y }));
     const minX = Math.min(...pts.map(p => p.x));
     const maxX = Math.max(...pts.map(p => p.x));
     const minY = Math.min(...pts.map(p => p.y));
     const maxY = Math.max(...pts.map(p => p.y));
 
-    // 拉伸体（自定义 UV：侧墙 V=高度，U=平面X）
     const extrudeSettings = {
       depth: b.totalHeight,
       bevelEnabled: false,
@@ -329,29 +425,26 @@
     const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
     geometry.computeVertexNormals();
 
-    // 立面纹理：水平分层线 + 竖向分户线
     const verticalDividers = getVerticalDividerCount(b.name);
     const sideTexture = createFacadeTexture(b.floors, verticalDividers);
     const sideMaterial = new THREE.MeshStandardMaterial({
       map: sideTexture,
-      color: 0x9fb0c4, // 冷灰蓝，和地面区分
+      color: 0x9fb0c4,
       roughness: 0.7,
       metalness: 0.05
     });
 
     const mesh = new THREE.Mesh(geometry, [roofMaterial, sideMaterial]);
-    mesh.rotation.x = -Math.PI / 2; // 让挤出方向成为竖直
+    mesh.rotation.x = -Math.PI / 2;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData = { name: b.name, floors: b.floors, height: b.totalHeight };
     buildingsGroup.add(mesh);
 
-    // 描边
     const edges = createEdgeLines(geometry);
     edges.rotation.x = -Math.PI / 2;
     buildingsGroup.add(edges);
 
-    // 标签（中心点）
     let cx = 0, cy = 0;
     b.shape.forEach(p => { cx += p.x; cy += p.y; });
     cx /= b.shape.length; cy /= b.shape.length;
@@ -376,15 +469,12 @@
 
   const LATITUDE = 36.65;
   function updateSun() {
-    const hour = parseFloat(document.getElementById('timeSlider').value);
+    const hour = getCurrentHour();
     const decl = parseFloat(document.getElementById('seasonSelect').value);
 
-    // UI 时间显示
-    const h = Math.floor(hour);
-    const m = Math.floor((hour - h) * 60);
-    document.getElementById('timeText').innerText = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+    // UI 时间显示同步（桌面块与底部迷你条）
+    setTimeText(hour);
 
-    // 太阳位置计算
     const rad = Math.PI/180;
     const hAngle = (hour - 12) * 15 * rad;
     const lat = LATITUDE * rad;
@@ -397,7 +487,6 @@
     let az = Math.acos(Math.min(1, Math.max(-1, cosAz)));
     if (hour < 12) az = -az;
 
-    // 方位换算：az=0 指向南，对应 +Z
     const dist = 600;
     const y = dist * Math.sin(alt);
     const r = dist * Math.cos(alt);
@@ -410,8 +499,65 @@
     sunLight.intensity = alt > 0 ? 1.2 : 0.0;
   }
 
-  document.getElementById('timeSlider').addEventListener('input', updateSun);
-  document.getElementById('seasonSelect').addEventListener('change', updateSun);
+  // 统一时间值在两个滑块间同步（桌面与移动迷你条）
+  function getCurrentHour() {
+    const desk = document.getElementById('timeSlider');
+    const dock = document.getElementById('timeSliderDock');
+    if (dock && dock.style.display !== 'none') {
+      return parseFloat(dock.value);
+    }
+    return parseFloat(desk.value);
+  }
+  function setHour(val) {
+    const desk = document.getElementById('timeSlider');
+    const dock = document.getElementById('timeSliderDock');
+    if (desk) desk.value = val;
+    if (dock) dock.value = val;
+  }
+  function setTimeText(hour) {
+    const h = Math.floor(hour);
+    const m = Math.floor((hour - h) * 60);
+    const text = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+    const t1 = document.getElementById('timeText');
+    const t2 = document.getElementById('timeTextDock');
+    if (t1) t1.innerText = text;
+    if (t2) t2.innerText = text;
+  }
+
+  // 事件绑定
+  function bindUI() {
+    const seasonSelect = document.getElementById('seasonSelect');
+    const timeSlider = document.getElementById('timeSlider');
+    const timeSliderDock = document.getElementById('timeSliderDock');
+
+    seasonSelect.addEventListener('change', updateSun);
+    timeSlider.addEventListener('input', (e) => { setHour(e.target.value); updateSun(); });
+    timeSliderDock.addEventListener('input', (e) => { setHour(e.target.value); updateSun(); });
+
+    // 折叠按钮（仅小屏显示）
+    const controlsPanel = document.getElementById('controls');
+    const fabBtn = document.getElementById('fabBtn');
+    const mql = window.matchMedia('(max-width: 600px)');
+
+    function applyMobileLayout() {
+      const dock = document.getElementById('timeDock');
+      if (mql.matches) {
+        dock.style.display = 'flex';
+        // 默认收起
+        controlsPanel.setAttribute('data-collapsed', 'true');
+      } else {
+        dock.style.display = 'none';
+        controlsPanel.setAttribute('data-collapsed', 'false');
+      }
+    }
+    fabBtn.addEventListener('click', () => {
+      const cur = controlsPanel.getAttribute('data-collapsed') === 'true';
+      controlsPanel.setAttribute('data-collapsed', cur ? 'false' : 'true');
+    });
+
+    applyMobileLayout();
+    mql.addEventListener('change', applyMobileLayout);
+  }
 
   // ========== 动画 ==========
   function animate() {
@@ -419,6 +565,10 @@
     controls.update();
     renderer.render(scene, camera);
   }
+
+  // 初始化
+  bindUI();
+  setHour(10);
   updateSun();
   animate();
 
