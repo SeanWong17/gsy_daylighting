@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>楼盘采光可视化</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {
+      --ui-bg: rgba(255,255,255,0.96);
+      --brand: #0b74ff;
+      --text: #2b2f36;
+    }
+    html, body { height: 100%; }
+    body { margin: 0; overflow: hidden; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif; background: #e6f3ff; }
+    #canvas-container { width: 100%; height: 100vh; display: block; }
+
+    /* UI 面板 */
+    #controls {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      width: 320px;
+      max-width: calc(100vw - 32px);
+      background: var(--ui-bg);
+      padding: 16px;
+      border-radius: 12px;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.15);
+      z-index: 10;
+      backdrop-filter: saturate(180%) blur(8px);
+    }
+    .control-group { margin-bottom: 14px; }
+    label { display: block; margin-bottom: 6px; font-weight: 700; font-size: 14px; color: var(--text); }
+    select, input[type="range"] { width: 100%; }
+    select {
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #dcdfe6;
+      background: #fff;
+      color: #333;
+    }
+    input[type="range"] { accent-color: var(--brand); }
+    .time-display { text-align: center; margin-top: 6px; font-weight: 800; color: var(--brand); font-size: 18px; letter-spacing: 0.5px; }
+    h2 { margin: 0 0 12px; font-size: 16px; text-align: center; color: #111; border-bottom: 1px solid #e9eef5; padding-bottom: 10px; }
+    .legend { display: flex; gap: 10px; font-size: 12px; margin-top: 8px; justify-content: center; color: #666; }
+
+    #compass {
+      position: absolute;
+      bottom: 18px;
+      right: 18px;
+      width: 80px;
+      height: 80px;
+      pointer-events: none;
+      z-index: 5;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+  <div id="controls">
+    <h2>☀️ 楼盘采光模拟系统</h2>
+
+    <div class="control-group">
+      <label>当前状态</label>
+      <div style="font-size: 13px; color: #555; line-height: 1.5;">
+        坐标对齐规划图<br>
+        方位：<span style="color:#e01919;font-weight:800;">↑ 上方为北</span>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <label for="seasonSelect">选择日期</label>
+      <select id="seasonSelect">
+        <option value="-23.44" selected>冬至 (12月22日)</option>
+        <option value="0">春分/秋分</option>
+        <option value="23.44">夏至 (6月22日)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label for="timeSlider">时间 (06:00 - 18:00)</label>
+      <input type="range" id="timeSlider" min="6" max="18" step="0.05" value="10" />
+      <div class="time-display" id="timeText">10:00</div>
+    </div>
+
+    <div class="legend">
+      <span>💡 提示: 拖动查看阴影变化</span>
+    </div>
+  </div>
+
+  <div id="compass">
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <circle cx="50" cy="50" r="45" fill="rgba(255,255,255,0.75)" stroke="#333" stroke-width="2"/>
+      <path d="M50 10 L60 50 L50 90 L40 50 Z" fill="#ddd" />
+      <path d="M50 10 L60 50 L50 50 L40 50 Z" fill="red" />
+      <text x="50" y="25" font-family="Arial" font-size="14" font-weight="bold" fill="red" text-anchor="middle">N</text>
+    </svg>
+  </div>
+
+  <div id="canvas-container" aria-label="3D canvas"></div>
+
+<script>
+  // ========== 数据 ==========
+  const buildingData = {
+    "version": 1, "scaleRatio": 0.138,
+    "buildings": [
+      { "name": "1号楼", "floors": 8, "floorHeight": 3, "totalHeight": 24, "shape": [ { "x": 43.61, "y": -107.49 }, { "x": 43.06, "y": -116.32 }, { "x": 64.59, "y": -115.77 }, { "x": 65.14, "y": -106.94 }, { "x": 43.61, "y": -107.49 } ] },
+      { "name": "2号楼", "floors": 8, "floorHeight": 3, "totalHeight": 24, "shape": [ { "x": 43.06, "y": -58.08 }, { "x": 43.61, "y": -68.29 }, { "x": 63.76, "y": -68.29 }, { "x": 64.31, "y": -58.63 }, { "x": 43.61, "y": -57.80 } ] },
+      { "name": "3号楼", "floors": 7, "floorHeight": 3, "totalHeight": 21, "shape": [ { "x": 43.33, "y": -13.08 }, { "x": 43.33, "y": -23.30 }, { "x": 64.59, "y": -23.02 }, { "x": 64.31, "y": -12.26 }, { "x": 43.33, "y": -13.08 } ] },
+      { "name": "4号楼", "floors": 8, "floorHeight": 3, "totalHeight": 24, "shape": [ { "x": 31.36, "y": 30.05 }, { "x": 31.50, "y": 23.84 }, { "x": 32.05, "y": 23.84 }, { "x": 32.33, "y": 20.80 }, { "x": 34.81, "y": 20.66 }, { "x": 35.37, "y": 18.87 }, { "x": 49.44, "y": 19.28 }, { "x": 49.44, "y": 20.52 }, { "x": 52.20, "y": 21.08 }, { "x": 52.07, "y": 23.70 }, { "x": 52.89, "y": 23.97 }, { "x": 52.76, "y": 30.18 }, { "x": 31.64, "y": 29.91 } ] },
+      { "name": "5号楼", "floors": 8, "floorHeight": 3, "totalHeight": 24, "shape": [ { "x": 31.46, "y": 72.84 }, { "x": 31.46, "y": 63.18 }, { "x": 51.89, "y": 63.46 }, { "x": 52.44, "y": 72.71 }, { "x": 31.46, "y": 72.71 } ] },
+      { "name": "6号楼", "floors": 10, "floorHeight": 3, "totalHeight": 30, "shape": [ { "x": -13.24, "y": 115.40 }, { "x": -13.24, "y": 104.36 }, { "x": 48.85, "y": 104.36 }, { "x": 48.85, "y": 115.40 }, { "x": -13.38, "y": 115.40 } ] },
+      { "name": "7号楼", "floors": 7, "floorHeight": 3.1, "totalHeight": 21.7, "shape": [ { "x": -21.53, "y": -107.49 }, { "x": -21.53, "y": -116.60 }, { "x": 33.67, "y": -116.60 }, { "x": 33.95, "y": -107.21 }, { "x": -21.53, "y": -107.49 } ] },
+      { "name": "8号楼", "floors": 7, "floorHeight": 3.1, "totalHeight": 21.7, "shape": [ { "x": -22.63, "y": -61.94 }, { "x": -22.08, "y": -71.05 }, { "x": 33.12, "y": -71.33 }, { "x": 33.39, "y": -61.94 }, { "x": -22.08, "y": -61.66 } ] },
+      { "name": "9号楼", "floors": 7, "floorHeight": 3.1, "totalHeight": 21.7, "shape": [ { "x": -23.18, "y": -16.81 }, { "x": -22.49, "y": -26.75 }, { "x": 32.01, "y": -26.33 }, { "x": 32.57, "y": -16.95 }, { "x": -23.18, "y": -17.22 } ] },
+      { "name": "10号楼", "floors": 7, "floorHeight": 3.1, "totalHeight": 21.7, "shape": [ { "x": -34.50, "y": 27.85 }, { "x": -34.64, "y": 18.47 }, { "x": 18.21, "y": 18.88 }, { "x": 18.35, "y": 27.71 }, { "x": -34.50, "y": 27.71 } ] },
+      { "name": "11号楼", "floors": 7, "floorHeight": 3.1, "totalHeight": 21.7, "shape": [ { "x": -34.64, "y": 72.98 }, { "x": -34.77, "y": 63.46 }, { "x": 18.21, "y": 63.60 }, { "x": 18.21, "y": 72.43 }, { "x": -34.50, "y": 72.84 } ] },
+      { "name": "12号楼", "floors": 8, "floorHeight": 3, "totalHeight": 24, "shape": [ { "x": -63.76, "y": 23.85 }, { "x": -63.48, "y": 14.05 }, { "x": -42.23, "y": 14.60 }, { "x": -42.23, "y": 23.85 }, { "x": -62.93, "y": 23.99 } ] },
+      { "name": "13号楼", "floors": 8, "floorHeight": 3, "totalHeight": 24, "shape": [ { "x": -64.59, "y": 72.84 }, { "x": -64.45, "y": 63.18 }, { "x": -43.33, "y": 63.60 }, { "x": -42.92, "y": 72.84 }, { "x": -65.00, "y": 72.98 } ] },
+      { "name": "14号楼", "floors": 5, "floorHeight": 3, "totalHeight": 15, "shape": [ { "x": -64.86, "y": 116.60 }, { "x": -65.14, "y": 100.03 }, { "x": -23.18, "y": 100.17 }, { "x": -23.04, "y": 116.46 }, { "x": -65.00, "y": 116.46 } ] }
+    ]
+  };
+
+  // ========== 场景 ==========
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xe6f3ff);
+  scene.fog = new THREE.Fog(0xe6f3ff, 120, 900);
+
+  const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 3000);
+  camera.position.set(200, 260, 320);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.maxPolarAngle = Math.PI / 2 - 0.1;
+
+  // 地面
+  const planeGeometry = new THREE.PlaneGeometry(2000, 2000);
+  const planeMaterial = new THREE.MeshStandardMaterial({ color: 0xdfe6ee, roughness: 0.95, metalness: 0.0 });
+  const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+  plane.rotation.x = -Math.PI / 2;
+  plane.receiveShadow = true;
+  scene.add(plane);
+
+  // 网格
+  const gridHelper = new THREE.GridHelper(1000, 50, 0xcfd8e3, 0xe9eff5);
+  scene.add(gridHelper);
+
+  // 北向箭头
+  const dir = new THREE.Vector3(0, 0, -1);
+  const origin = new THREE.Vector3(0, 1, 180);
+  const arrowHelper = new THREE.ArrowHelper(dir, origin, 24, 0xff3b30, 10, 5);
+  scene.add(arrowHelper);
+
+  // ========== 立面纹理：水平分层线 + 竖向分户线 ==========
+  function createFacadeTexture(floors, verticalDividerCount) {
+    const floorPx = 28;             // 每层在纹理中的像素高度（影响水平线间距）
+    const width = 512;              // 提高横向分辨率，竖线更清晰
+    const height = Math.max(floors * floorPx, 2);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+
+    // 背景渐变
+    const grd = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    grd.addColorStop(0, '#b1bfd1');
+    grd.addColorStop(1, '#a2b2c7');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, width, height);
+
+    // 水平分层线：floors - 1 根（等距，模拟楼层）
+    for (let f = 1; f < floors; f++) {
+      const y = Math.round((f / floors) * height);
+      ctx.fillStyle = 'rgba(35,45,60,0.55)'; ctx.fillRect(0, y - 1, width, 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(0, y + 1, width, 1);
+    }
+
+    // 竖向分户线：根据 verticalDividerCount 画等距竖线
+    if (verticalDividerCount && verticalDividerCount > 0) {
+      for (let i = 1; i <= verticalDividerCount; i++) {
+        const t = i / (verticalDividerCount + 1);
+        const x = Math.round(t * width);
+
+        // 主线 + 高光，增强可读性
+        ctx.fillStyle = 'rgba(35,45,60,0.55)'; ctx.fillRect(x - 1, 0, 2, height);
+        ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fillRect(x + 1, 0, 1, height);
+      }
+    }
+
+    const tex = new THREE.CanvasTexture(canvas);
+    // 垂直方向不重复；水平方向也不重复，以确保竖线位置固定在 0..1
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.repeat.set(1, 1);
+    tex.anisotropy = 8;
+    tex.needsUpdate = true;
+    return tex;
+  }
+
+  // 顶面材质
+  const roofMaterial = new THREE.MeshStandardMaterial({ color: 0xf5f7fa, roughness: 0.9, metalness: 0.0 });
+
+  // 描边
+  function createEdgeLines(geometry) {
+    const edges = new THREE.EdgesGeometry(geometry);
+    const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x435061, linewidth: 1, transparent: true, opacity: 0.5 }));
+    return line;
+  }
+
+  // 标签
+  function createLabel(text, x, y, z) {
+    const canvas = document.createElement('canvas');
+    const size = 256;
+    canvas.width = size; canvas.height = size / 2;
+    const ctx = canvas.getContext('2d');
+
+    // 圆角底
+    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+    const r = 28, w = size - 24, h = (size/2) - 24, x0 = 12, y0 = 12;
+    ctx.beginPath();
+    ctx.moveTo(x0 + r, y0);
+    ctx.arcTo(x0 + w, y0, x0 + w, y0 + h, r);
+    ctx.arcTo(x0 + w, y0 + h, x0, y0 + h, r);
+    ctx.arcTo(x0, y0 + h, x0, y0, r);
+    ctx.arcTo(x0, y0, x0 + r, y0, r);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.font = "bold 72px Arial, Helvetica, sans-serif";
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(text, size/2, (size/4)+2);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true }));
+    sprite.scale.set(12, 6, 1);
+    sprite.position.set(x, y + 4, z);
+    sprite.userData.type = 'label';
+    return sprite;
+  }
+
+  // 自定义 UV：侧墙 V 随高度，U 随平面 X（用于固定竖线位置）
+  function makeUVGenerator(minX, maxX, minY, maxY, depth) {
+    const rangeX = Math.max(1e-6, maxX - minX);
+    const rangeY = Math.max(1e-6, maxY - minY);
+    const invDepth = depth > 0 ? 1 / depth : 1;
+
+    return {
+      generateTopUV: function (geometry, vertices, a, b, c) {
+        const ax = vertices[a * 3], ay = vertices[a * 3 + 1];
+        const bx = vertices[b * 3], by = vertices[b * 3 + 1];
+        const cx = vertices[c * 3], cy = vertices[c * 3 + 1];
+
+        return [
+          new THREE.Vector2((ax - minX) / rangeX, (ay - minY) / rangeY),
+          new THREE.Vector2((bx - minX) / rangeX, (by - minY) / rangeY),
+          new THREE.Vector2((cx - minX) / rangeX, (cy - minY) / rangeY),
+        ];
+      },
+      generateSideWallUV: function (geometry, vertices, a, b, c, d) {
+        const ax = vertices[a * 3], az = vertices[a * 3 + 2];
+        const bx = vertices[b * 3], bz = vertices[b * 3 + 2];
+        const cx = vertices[c * 3], cz = vertices[c * 3 + 2];
+        const dx = vertices[d * 3], dz = vertices[d * 3 + 2];
+
+        const uA = (ax - minX) / rangeX;
+        const uB = (bx - minX) / rangeX;
+        const uC = (cx - minX) / rangeX;
+        const uD = (dx - minX) / rangeX;
+
+        const vA = az * invDepth;
+        const vB = bz * invDepth;
+        const vC = cz * invDepth;
+        const vD = dz * invDepth;
+
+        return [
+          new THREE.Vector2(uA, vA),
+          new THREE.Vector2(uB, vB),
+          new THREE.Vector2(uC, vC),
+          new THREE.Vector2(uD, vD),
+        ];
+      }
+    };
+  }
+
+  // 分户竖线数量规则
+  function getVerticalDividerCount(name) {
+    const n = parseInt(name, 10);
+    if ([1,2,3,4,5,12,13].includes(n)) return 1;  // 两户
+    if ([7,8,9,10,11].includes(n)) return 3;      // 四户
+    if (n === 6) return 5;                         // 六户
+    return 0;                                      // 其他不处理（14号楼）
+  }
+
+  // ========== 构建楼体 ==========
+  const buildingsGroup = new THREE.Group();
+  scene.add(buildingsGroup);
+
+  buildingData.buildings.forEach(b => {
+    if (!b.shape || b.shape.length < 3) return;
+
+    // 2D 轮廓（注意 Y 取反以符合“上北下南”）
+    const shape = new THREE.Shape();
+    shape.moveTo(b.shape[0].x, -b.shape[0].y);
+    for (let i = 1; i < b.shape.length; i++) shape.lineTo(b.shape[i].x, -b.shape[i].y);
+    shape.closePath();
+
+    // 形状范围（用于 UV 映射）
+    const pts = b.shape.map(p => ({ x: p.x, y: -p.y }));
+    const minX = Math.min(...pts.map(p => p.x));
+    const maxX = Math.max(...pts.map(p => p.x));
+    const minY = Math.min(...pts.map(p => p.y));
+    const maxY = Math.max(...pts.map(p => p.y));
+
+    // 拉伸体（自定义 UV：侧墙 V=高度，U=平面X）
+    const extrudeSettings = {
+      depth: b.totalHeight,
+      bevelEnabled: false,
+      UVGenerator: makeUVGenerator(minX, maxX, minY, maxY, b.totalHeight)
+    };
+    const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    geometry.computeVertexNormals();
+
+    // 立面纹理：水平分层线 + 竖向分户线
+    const verticalDividers = getVerticalDividerCount(b.name);
+    const sideTexture = createFacadeTexture(b.floors, verticalDividers);
+    const sideMaterial = new THREE.MeshStandardMaterial({
+      map: sideTexture,
+      color: 0x9fb0c4, // 冷灰蓝，和地面区分
+      roughness: 0.7,
+      metalness: 0.05
+    });
+
+    const mesh = new THREE.Mesh(geometry, [roofMaterial, sideMaterial]);
+    mesh.rotation.x = -Math.PI / 2; // 让挤出方向成为竖直
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData = { name: b.name, floors: b.floors, height: b.totalHeight };
+    buildingsGroup.add(mesh);
+
+    // 描边
+    const edges = createEdgeLines(geometry);
+    edges.rotation.x = -Math.PI / 2;
+    buildingsGroup.add(edges);
+
+    // 标签（中心点）
+    let cx = 0, cy = 0;
+    b.shape.forEach(p => { cx += p.x; cy += p.y; });
+    cx /= b.shape.length; cy /= b.shape.length;
+    const label = createLabel(b.name, cx, b.totalHeight, cy);
+    label.renderOrder = 999;
+    buildingsGroup.add(label);
+  });
+
+  // ========== 灯光 / 太阳 ==========
+  const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.width = 4096;
+  sunLight.shadow.mapSize.height = 4096;
+  const d = 360;
+  sunLight.shadow.camera.left = -d; sunLight.shadow.camera.right = d;
+  sunLight.shadow.camera.top = d; sunLight.shadow.camera.bottom = -d;
+  sunLight.shadow.camera.near = 1;
+  sunLight.shadow.camera.far = 1500;
+  scene.add(sunLight);
+
+  scene.add(new THREE.AmbientLight(0x9fb3c8, 0.45));
+
+  const LATITUDE = 36.65;
+  function updateSun() {
+    const hour = parseFloat(document.getElementById('timeSlider').value);
+    const decl = parseFloat(document.getElementById('seasonSelect').value);
+
+    // UI 时间显示
+    const h = Math.floor(hour);
+    const m = Math.floor((hour - h) * 60);
+    document.getElementById('timeText').innerText = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+
+    // 太阳位置计算
+    const rad = Math.PI/180;
+    const hAngle = (hour - 12) * 15 * rad;
+    const lat = LATITUDE * rad;
+    const dec = decl * rad;
+
+    const sinAlt = Math.sin(lat)*Math.sin(dec) + Math.cos(lat)*Math.cos(dec)*Math.cos(hAngle);
+    const alt = Math.asin(Math.max(-1, Math.min(1, sinAlt)));
+
+    const cosAz = (sinAlt*Math.sin(lat) - Math.sin(dec)) / (Math.cos(alt)*Math.cos(lat));
+    let az = Math.acos(Math.min(1, Math.max(-1, cosAz)));
+    if (hour < 12) az = -az;
+
+    // 方位换算：az=0 指向南，对应 +Z
+    const dist = 600;
+    const y = dist * Math.sin(alt);
+    const r = dist * Math.cos(alt);
+    const x = r * Math.sin(az);
+    const z = r * Math.cos(az);
+
+    sunLight.position.set(x, y, z);
+    sunLight.target.position.set(0, 0, 0);
+    sunLight.target.updateMatrixWorld();
+    sunLight.intensity = alt > 0 ? 1.2 : 0.0;
+  }
+
+  document.getElementById('timeSlider').addEventListener('input', updateSun);
+  document.getElementById('seasonSelect').addEventListener('change', updateSun);
+
+  // ========== 动画 ==========
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  updateSun();
+  animate();
+
+  // ========== 响应式 ==========
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
