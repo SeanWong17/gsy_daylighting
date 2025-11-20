@@ -485,7 +485,8 @@
 
     const cosAz = (sinAlt*Math.sin(lat) - Math.sin(dec)) / (Math.cos(alt)*Math.cos(lat));
     let az = Math.acos(Math.min(1, Math.max(-1, cosAz)));
-    if (hour < 12) az = -az;
+    // if (hour < 12) az = -az;
+    if (hour >= 12) az = -az;  
 
     const dist = 600;
     const y = dist * Math.sin(alt);
