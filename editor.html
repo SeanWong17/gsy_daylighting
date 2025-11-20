@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>楼盘规划图配置器</title>
+    <style>
+        body { display: flex; margin: 0; height: 100vh; font-family: 'Microsoft YaHei', sans-serif; overflow: hidden; }
+        
+        /* 左侧画布区 */
+        #canvas-wrapper {
+            flex: 1;
+            background: #e0e0e0;
+            position: relative;
+            overflow: auto; /* 允许大图滚动 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas { box-shadow: 0 0 10px rgba(0,0,0,0.2); cursor: crosshair; background: white; }
+
+        /* 右侧边栏 */
+        #sidebar {
+            width: 320px;
+            background: #f8f9fa;
+            border-left: 1px solid #ccc;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        h3 { margin-top: 0; color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+        .step { margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 6px; border: 1px solid #ddd; }
+        .step.active { border-color: #007bff; box-shadow: 0 0 5px rgba(0,123,255,0.2); }
+        
+        label { display: block; margin-bottom: 5px; font-weight: bold; font-size: 13px; }
+        input[type="text"], input[type="number"], input[type="file"] {
+            width: 100%; box-sizing: border-box; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;
+        }
+        
+        button {
+            width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 5px; font-size: 14px;
+        }
+        button:hover { background: #0069d9; }
+        button.secondary { background: #6c757d; }
+        button.secondary:hover { background: #5a6268; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+
+        #building-list { flex: 1; overflow-y: auto; border-top: 1px solid #eee; margin-top: 10px; }
+        .building-item { padding: 8px; border-bottom: 1px solid #eee; font-size: 12px; display: flex; justify-content: space-between; }
+        .building-item:hover { background: #f1f1f1; }
+        .del-btn { color: red; cursor: pointer; font-weight: bold; }
+
+        .status-bar { margin-top: 10px; font-size: 12px; color: #666; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div id="canvas-wrapper">
+    <canvas id="editorCanvas"></canvas>
+</div>
+
+<div id="sidebar">
+    <h3>🛠️ 楼盘数据配置</h3>
+
+    <div class="step" id="step-upload">
+        <label>1. 上传规划图/总平图</label>
+        <input type="file" id="fileInput" accept="image/*">
+    </div>
+
+    <div class="step" id="step-scale">
+        <label>2. 标定比例尺</label>
+        <div style="font-size:12px; color:#666; margin-bottom:5px;">
+            状态: <span id="scaleStatus">未标定</span>
+        </div>
+        <button id="btnStartScale" disabled>开始标定 (点击两点)</button>
+        <div id="scaleInputArea" style="display:none; margin-top:5px;">
+            <label>两点间实际距离 (米):</label>
+            <input type="number" id="realDistance" value="50">
+            <button id="btnConfirmScale" class="secondary">确认比例</button>
+        </div>
+    </div>
+
+    <div class="step active" id="step-draw">
+        <label>3. 绘制楼栋</label>
+        <div style="font-size:12px; color:#666; margin-bottom:5px;">
+            操作: 左键加点，右键闭合结束。
+        </div>
+        <button id="btnDrawMode" class="secondary">当前: 浏览模式</button>
+    </div>
+
+    <label>已添加楼栋 (<span id="countDisplay">0</span>)</label>
+    <div id="building-list"></div>
+    
+    <button id="btnExport" style="margin-top: 10px; background: #28a745;">导出 JSON 配置</button>
+</div>
+
+<script>
+    const canvas = document.getElementById('editorCanvas');
+    const ctx = canvas.getContext('2d');
+    const fileInput = document.getElementById('fileInput');
+    
+    // 状态变量
+    let image = new Image();
+    let isImageLoaded = false;
+    let scaleRatio = 0; // 1像素 = 多少米
+    let buildings = []; // 存储所有楼栋数据
+    
+    // 交互模式: 'idle', 'scaling_p1', 'scaling_p2', 'drawing'
+    let mode = 'idle'; 
+    
+    // 临时数据
+    let scalePoints = []; // 标定用的两个点
+    let currentPoly = []; // 当前正在画的多边形点集
+    let mousePos = {x:0, y:0};
+
+    // 1. 图片加载
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if(!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            image.onload = () => {
+                canvas.width = image.width;
+                canvas.height = image.height;
+                isImageLoaded = true;
+                document.getElementById('btnStartScale').disabled = false;
+                draw();
+            };
+            image.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    // 2. 渲染循环 (简单的重绘)
+    function draw() {
+        // 清空
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (!isImageLoaded) {
+            ctx.font = "20px Arial";
+            ctx.fillStyle = "#999";
+            ctx.fillText("请在右侧上传图片", 50, 50);
+            return;
+        }
+
+        // 画底图
+        ctx.drawImage(image, 0, 0);
+
+        // 画已存在的楼栋
+        buildings.forEach(b => {
+            drawPolygon(b.points, 'rgba(0, 123, 255, 0.3)', '#007bff');
+            // 标记楼号
+            const center = getPolygonCenter(b.points);
+            ctx.fillStyle = "white";
+            ctx.font = "bold 14px Arial";
+            ctx.fillText(b.name, center.x - 10, center.y);
+        });
+
+        // 画标定线
+        if (scalePoints.length > 0) {
+            ctx.beginPath();
+            ctx.arc(scalePoints[0].x, scalePoints[0].y, 5, 0, Math.PI*2);
+            ctx.fillStyle = 'red';
+            ctx.fill();
+        }
+        if (scalePoints.length === 2) {
+            ctx.beginPath();
+            ctx.arc(scalePoints[1].x, scalePoints[1].y, 5, 0, Math.PI*2);
+            ctx.fillStyle = 'red';
+            ctx.fill();
+            // 连线
+            ctx.beginPath();
+            ctx.moveTo(scalePoints[0].x, scalePoints[0].y);
+            ctx.lineTo(scalePoints[1].x, scalePoints[1].y);
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        // 画当前正在绘制的多边形
+        if (currentPoly.length > 0) {
+            // 画点和连线
+            ctx.beginPath();
+            ctx.moveTo(currentPoly[0].x, currentPoly[0].y);
+            for (let i = 1; i < currentPoly.length; i++) {
+                ctx.lineTo(currentPoly[i].x, currentPoly[i].y);
+            }
+            // 鼠标跟随线
+            ctx.lineTo(mousePos.x, mousePos.y);
+            
+            ctx.strokeStyle = '#28a745';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // 画点
+            ctx.fillStyle = '#28a745';
+            currentPoly.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+                ctx.fill();
+            });
+        }
+    }
+
+    // 辅助：画多边形
+    function drawPolygon(points, fillColor, strokeColor) {
+        if(points.length < 3) return;
+        ctx.beginPath();
+        ctx.moveTo(points[0].x, points[0].y);
+        for(let i=1; i<points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+        ctx.closePath();
+        ctx.fillStyle = fillColor;
+        ctx.fill();
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+    }
+
+    // 辅助：计算中心点用于显示文字
+    function getPolygonCenter(points) {
+        let x = 0, y = 0;
+        points.forEach(p => { x += p.x; y += p.y; });
+        return { x: x / points.length, y: y / points.length };
+    }
+
+    // 3. 交互逻辑
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mousePos = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+        if (mode === 'drawing') draw();
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+        if (!isImageLoaded) return;
+        // 左键点击
+        if (e.button === 0) {
+            const rect = canvas.getBoundingClientRect();
+            const p = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+            if (mode === 'scaling') {
+                scalePoints.push(p);
+                if (scalePoints.length === 2) {
+                    mode = 'idle'; // 暂停等待输入距离
+                    document.getElementById('scaleInputArea').style.display = 'block';
+                }
+                draw();
+            } else if (mode === 'drawing') {
+                currentPoly.push(p);
+                draw();
+            }
+        }
+        // 右键点击 (结束绘制)
+        else if (e.button === 2) {
+            if (mode === 'drawing' && currentPoly.length > 2) {
+                finishPolygon();
+            }
+        }
+    });
+
+    // 禁用右键菜单
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    // 结束绘制一个楼栋
+    function finishPolygon() {
+        if (scaleRatio === 0) {
+            alert("请先标定比例尺！");
+            currentPoly = [];
+            draw();
+            return;
+        }
+
+        // 简单的 prompt 输入 (实际项目中可以用模态框)
+        const name = prompt("请输入楼号 (例如: 1号楼):", (buildings.length + 1) + "号楼");
+        if (!name) return; // 取消
+
+        const floors = prompt("请输入总层数:", "33");
+        const heightPerFloor = prompt("请输入层高 (米):", "3");
+        
+        const b = {
+            id: Date.now(),
+            name: name,
+            floors: parseInt(floors),
+            floorHeight: parseFloat(heightPerFloor),
+            points: [...currentPoly] // 复制数组
+        };
+        
+        buildings.push(b);
+        currentPoly = []; // 清空
+        updateList();
+        draw();
+    }
+
+    // 4. 按钮逻辑
+    
+    // 标定
+    document.getElementById('btnStartScale').addEventListener('click', () => {
+        scalePoints = [];
+        mode = 'scaling';
+        document.getElementById('scaleStatus').innerText = "请在图中点击两点 (如标尺或已知边长)";
+        document.getElementById('scaleInputArea').style.display = 'none';
+        draw();
+    });
+
+    document.getElementById('btnConfirmScale').addEventListener('click', () => {
+        const distPx = Math.hypot(scalePoints[1].x - scalePoints[0].x, scalePoints[1].y - scalePoints[0].y);
+        const distReal = parseFloat(document.getElementById('realDistance').value);
+        
+        scaleRatio = distReal / distPx; // 1像素 = x 米
+        
+        document.getElementById('scaleStatus').innerText = `已标定 (1px ≈ ${scaleRatio.toFixed(4)}m)`;
+        document.getElementById('scaleInputArea').style.display = 'none';
+        
+        // 自动切换到绘制模式
+        toggleDrawMode(true);
+    });
+
+    // 绘制模式切换
+    const btnDrawMode = document.getElementById('btnDrawMode');
+    btnDrawMode.addEventListener('click', () => {
+        if (mode === 'drawing') {
+            toggleDrawMode(false);
+        } else {
+            toggleDrawMode(true);
+        }
+    });
+
+    function toggleDrawMode(active) {
+        if (active) {
+            mode = 'drawing';
+            btnDrawMode.innerText = "当前: ✏️ 正在绘制 (右键结束)";
+            btnDrawMode.style.background = "#28a745"; // Green
+            btnDrawMode.style.color = "white";
+        } else {
+            mode = 'idle';
+            btnDrawMode.innerText = "当前: ✋ 浏览模式";
+            btnDrawMode.style.background = "#6c757d"; // Grey
+            currentPoly = [];
+            draw();
+        }
+    }
+
+    // 更新列表
+    function updateList() {
+        const list = document.getElementById('building-list');
+        list.innerHTML = '';
+        document.getElementById('countDisplay').innerText = buildings.length;
+
+        buildings.forEach((b, index) => {
+            const div = document.createElement('div');
+            div.className = 'building-item';
+            div.innerHTML = `
+                <span><b>${b.name}</b> (${b.floors}层)</span>
+                <span class="del-btn" onclick="removeBuilding(${index})">×</span>
+            `;
+            list.appendChild(div);
+        });
+    }
+
+    window.removeBuilding = function(index) {
+        if(confirm('确定删除该楼栋吗？')) {
+            buildings.splice(index, 1);
+            updateList();
+            draw();
+        }
+    };
+
+    // 5. 导出功能
+    document.getElementById('btnExport').addEventListener('click', () => {
+        if (buildings.length === 0) {
+            alert("没有数据可导出");
+            return;
+        }
+
+        // 计算整个场景的包围盒中心，用于将坐标归一化到 (0,0)
+        // 这对 Three.js 很重要，否则模型会偏离中心很远
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        buildings.forEach(b => {
+            b.points.forEach(p => {
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.y > maxY) maxY = p.y;
+            });
+        });
+        const centerX = (minX + maxX) / 2;
+        const centerY = (minY + maxY) / 2;
+
+        const exportData = {
+            version: 1.0,
+            scaleRatio: scaleRatio, // 1px = ? meters
+            origin: { x: centerX, y: centerY }, // 原始图片的中心点坐标
+            buildings: buildings.map(b => ({
+                name: b.name,
+                floors: b.floors,
+                floorHeight: b.floorHeight,
+                totalHeight: b.floors * b.floorHeight,
+                // 转换坐标：1. 以中心为原点 2. 乘以比例尺转为米 3. Y轴翻转(Canvas Y向下, ThreeJS Z向下/南)
+                // 注意：Canvas中 y向下，Threejs中我们通常把规划图的 y 映射为 z (南)
+                shape: b.points.map(p => ({
+                    x: (p.x - centerX) * scaleRatio,
+                    y: (p.y - centerY) * scaleRatio 
+                }))
+            }))
+        };
+
+        // 下载文件
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "buildings_config.json");
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+    });
+
+</script>
+</body>
+</html>
