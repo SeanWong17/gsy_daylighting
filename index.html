@@ -313,7 +313,8 @@
   const roofMaterial = new THREE.MeshStandardMaterial({ color: 0xf5f7fa, roughness: 0.9, metalness: 0.0 });
 
   function createEdgeLines(geometry) {
-    const edges = new THREE.EdgesGeometry(geometry);
+    // const edges = new THREE.EdgesGeometry(geometry);
+    const edges = new THREE.EdgesGeometry(geometry, 15);
     const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x435061, linewidth: 1, transparent: true, opacity: 0.5 }));
     return line;
   }
